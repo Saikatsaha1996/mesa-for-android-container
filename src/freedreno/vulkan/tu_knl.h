@@ -50,7 +50,8 @@ struct tu_bo {
    uint32_t submit_bo_list_idx;
    uint32_t dump_bo_list_idx;
 
-#ifdef TU_HAS_KGSL
+//#ifdef TU_HAS_KGSL
+#if defined(TU_HAS_KGSL) || defined(TU_HAS_KGSL_DRM)
    /* We have to store fd returned by ion_fd_data
     * in order to be able to mmap this buffer and to
     * export file descriptor.
@@ -260,6 +261,12 @@ VkResult tu_sparse_vma_init(struct tu_device *dev,
 
 void tu_sparse_vma_finish(struct tu_device *device,
                           struct tu_sparse_vma *vma);
+
+VkResult
+tu_knl_kgsl_drm_load(struct tu_instance *instance,
+                     struct _drmVersion *version,
+                     struct tu_physical_device **out,
+                     const char *path);
 
 VkResult tu_knl_kgsl_load(struct tu_instance *instance, int fd);
 
