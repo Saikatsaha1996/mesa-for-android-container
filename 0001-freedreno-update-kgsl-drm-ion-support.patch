@@ -1,0 +1,267 @@
+From 67a5a0f3f0b81e19bfd4d6e96abbf63c0295a5f8 Mon Sep 17 00:00:00 2001
+From: Your Name <you@example.com>
+Date: Tue, 28 Jul 2026 21:50:53 +0530
+Subject: [PATCH] freedreno: update kgsl drm ion support
+
+---
+ src/freedreno/vulkan/ion/ion.h          |  8 ++--
+ src/freedreno/vulkan/ion/ion_4.19.h     |  8 ++--
+ src/freedreno/vulkan/tu_device.cc       | 13 ++++++
+ src/freedreno/vulkan/tu_knl.cc          |  7 +++-
+ src/freedreno/vulkan/tu_knl_kgsl_drm.cc | 53 ++++++++++++++++++++-----
+ 5 files changed, 71 insertions(+), 18 deletions(-)
+
+diff --git a/src/freedreno/vulkan/ion/ion.h b/src/freedreno/vulkan/ion/ion.h
+index 9841c97..fe8e726 100644
+--- a/src/freedreno/vulkan/ion/ion.h
++++ b/src/freedreno/vulkan/ion/ion.h
+@@ -8,8 +8,8 @@
+  * contains no copyrightable information.
+  */
+ 
+-#ifndef _UAPI_LINUX_ION_H
+-#define _UAPI_LINUX_ION_H
++#ifndef _UAPI_LINUX_ION_NEW_H
++#define _UAPI_LINUX_ION_NEW_H
+ #include <linux/ioctl.h>
+ #include <linux/types.h>
+ /* WARNING: DO NOT EDIT, AUTO-GENERATED CODE - SEE TOP FOR INSTRUCTIONS */
+@@ -34,7 +34,7 @@ enum ion_heap_type {
+ #define ION_FLAG_CACHED 1
+ /* WARNING: DO NOT EDIT, AUTO-GENERATED CODE - SEE TOP FOR INSTRUCTIONS */
+ #define ION_FLAG_CACHED_NEEDS_SYNC 2
+-struct ion_allocation_data {
++struct ion_new_allocation_data {
+  size_t len;
+  size_t align;
+ /* WARNING: DO NOT EDIT, AUTO-GENERATED CODE - SEE TOP FOR INSTRUCTIONS */
+@@ -58,7 +58,7 @@ struct ion_custom_data {
+ };
+ #define ION_IOC_MAGIC 'I'
+ /* WARNING: DO NOT EDIT, AUTO-GENERATED CODE - SEE TOP FOR INSTRUCTIONS */
+-#define ION_IOC_ALLOC _IOWR(ION_IOC_MAGIC, 0,   struct ion_allocation_data)
++#define ION_IOC_NEW_ALLOC _IOWR(ION_IOC_MAGIC, 0,   struct ion_new_allocation_data)
+ #define ION_IOC_FREE _IOWR(ION_IOC_MAGIC, 1, struct ion_handle_data)
+ #define ION_IOC_MAP _IOWR(ION_IOC_MAGIC, 2, struct ion_fd_data)
+ #define ION_IOC_SHARE _IOWR(ION_IOC_MAGIC, 4, struct ion_fd_data)
+diff --git a/src/freedreno/vulkan/ion/ion_4.19.h b/src/freedreno/vulkan/ion/ion_4.19.h
+index e5a45c9..98ab9be 100644
+--- a/src/freedreno/vulkan/ion/ion_4.19.h
++++ b/src/freedreno/vulkan/ion/ion_4.19.h
+@@ -8,8 +8,8 @@
+  * contains no copyrightable information.
+  */
+ 
+-#ifndef _UAPI_LINUX_ION_NEW_H
+-#define _UAPI_LINUX_ION_NEW_H
++#ifndef _UAPI_LINUX_ION_H
++#define _UAPI_LINUX_ION_H
+ #include <linux/ioctl.h>
+ #include <linux/types.h>
+ #define ION_NUM_HEAP_IDS (sizeof(unsigned int) * 8)
+@@ -25,7 +25,7 @@ enum ion_heap_id {
+     ION_HEAP_CUSTOM_END = (ION_HEAP_CUSTOM_START << 22),
+ };
+ #define ION_NUM_MAX_HEAPS (32)
+-struct ion_new_allocation_data {
++struct ion_allocation_data {
+     __u64 len;
+     __u32 heap_id_mask;
+     __u32 flags;
+@@ -49,7 +49,7 @@ struct ion_heap_query {
+     __u32 reserved2;
+ };
+ #define ION_IOC_MAGIC 'I'
+-#define ION_IOC_NEW_ALLOC _IOWR(ION_IOC_MAGIC, 0, struct ion_new_allocation_data)
++#define ION_IOC_ALLOC _IOWR(ION_IOC_MAGIC, 0, struct ion_allocation_data)
+ #define ION_IOC_HEAP_QUERY _IOWR(ION_IOC_MAGIC, 8, struct ion_heap_query)
+ #define ION_IOC_ABI_VERSION _IOR(ION_IOC_MAGIC, 9, __u32)
+ #endif
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+index 213d958..6de938c 100644
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -1618,6 +1618,10 @@ VkResult
+ tu_physical_device_init(struct tu_physical_device *device,
+                         struct tu_instance *instance)
+ {
++   mesa_logi("physical_init entry kgsl_dma_fd=%d device=%p",
++             device->kgsl_dma_fd,
++             device);
++
+    VkResult result = VK_SUCCESS;
+ 
+    const char *fd_name = fd_dev_name(&device->dev_id);
+@@ -2830,7 +2834,16 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
+    }
+ 
+    device->instance = physical_device->instance;
++   mesa_logi("before assign physical=%p dma_fd=%d",
++          physical_device,
++          physical_device->kgsl_dma_fd);
+    device->physical_device = physical_device;
++   mesa_logi("after assign physical=%p dma_fd=%d",
++          device->physical_device,
++          device->physical_device->kgsl_dma_fd);
++   mesa_logi("device_create physical=%p dma_fd=%d",
++          physical_device,
++          physical_device->kgsl_dma_fd);
+    device->device_idx = device->physical_device->device_count++;
+ 
+    result = tu_drm_device_init(device);
+diff --git a/src/freedreno/vulkan/tu_knl.cc b/src/freedreno/vulkan/tu_knl.cc
+index de09300..301f206 100644
+--- a/src/freedreno/vulkan/tu_knl.cc
++++ b/src/freedreno/vulkan/tu_knl.cc
+@@ -442,7 +442,12 @@ tu_physical_device_try_create(struct vk_instance *vk_instance,
+    }
+ 
+    device->master_fd = master_fd;
+-   device->kgsl_dma_fd = -1;
++   mesa_logi("RESET kgsl_dma_fd before=%d device=%p",
++          device->kgsl_dma_fd,
++          device);
++   //device->kgsl_dma_fd = -1;
++   if (device->kgsl_dma_fd == 0)
++      device->kgsl_dma_fd = -1;
+ 
+    assert(strlen(path) < ARRAY_SIZE(device->fd_path));
+    snprintf(device->fd_path, ARRAY_SIZE(device->fd_path), "%s", path);
+diff --git a/src/freedreno/vulkan/tu_knl_kgsl_drm.cc b/src/freedreno/vulkan/tu_knl_kgsl_drm.cc
+index e4b80b1..de54949 100644
+--- a/src/freedreno/vulkan/tu_knl_kgsl_drm.cc
++++ b/src/freedreno/vulkan/tu_knl_kgsl_drm.cc
+@@ -104,18 +104,25 @@ static VkResult
+ bo_init_new_ion(struct tu_device *dev, struct tu_bo **out_bo, uint64_t size,
+                 enum tu_bo_alloc_flags flags)
+ {
+-   struct ion_new_allocation_data alloc = {
++   struct ion_allocation_data alloc = {
+       .len = size,
+       .heap_id_mask = KGSL_ION_SYSTEM_HEAP_MASK,
+       .flags = 0,
+       .fd = -1,
+    };
+ 
++   mesa_logi("dev=%p physical=%p local_fd=%d dma_fd=%d dma_type=%d",
++          dev,
++          dev->physical_device,
++          dev->physical_device->local_fd,
++          dev->physical_device->kgsl_dma_fd,
++          dev->physical_device->kgsl_dma_type);
++
+    int ret;
+-   ret = safe_ioctl(dev->physical_device->kgsl_dma_fd, ION_IOC_NEW_ALLOC, &alloc);
++   ret = safe_ioctl(dev->physical_device->kgsl_dma_fd, ION_IOC_ALLOC, &alloc);
+    if (ret) {
+       return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+-                       "ION_IOC_NEW_ALLOC failed (%s)", strerror(errno));
++                       "ION_IOC_ALLOC failed (%s)", strerror(errno));
+    }
+ 
+    return tu_bo_init_dmabuf(dev, out_bo, -1, TU_BO_ALLOC_NO_FLAGS, alloc.fd);
+@@ -125,7 +132,7 @@ static VkResult
+ bo_init_new_ion_legacy(struct tu_device *dev, struct tu_bo **out_bo, uint64_t size,
+                        enum tu_bo_alloc_flags flags)
+ {
+-   struct ion_allocation_data alloc = {
++   struct ion_new_allocation_data alloc = {
+       .len = size,
+       .align = 4096,
+       .heap_id_mask = KGSL_ION_SYSTEM_HEAP_MASK,
+@@ -134,10 +141,10 @@ bo_init_new_ion_legacy(struct tu_device *dev, struct tu_bo **out_bo, uint64_t si
+    };
+ 
+    int ret;
+-   ret = safe_ioctl(dev->physical_device->kgsl_dma_fd, ION_IOC_ALLOC, &alloc);
++   ret = safe_ioctl(dev->physical_device->kgsl_dma_fd, ION_IOC_NEW_ALLOC, &alloc);
+    if (ret) {
+       return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+-                       "ION_IOC_ALLOC failed (%s)", strerror(errno));
++                       "ION_IOC_NEW_ALLOC failed (%s)", strerror(errno));
+    }
+ 
+    struct ion_fd_data share = {
+@@ -1801,7 +1808,8 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd,
+ 
+    static const char dma_heap_path[] = "/dev/dma_heap/system";
+    static const char ion_path[] = "/dev/ion";
+-   int dma_fd;
++   //int dma_fd;
++   int dma_fd = -1;
+ 
+    dma_fd = open(dma_heap_path, O_RDONLY);
+    if (dma_fd >= 0) {
+@@ -1823,6 +1831,10 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd,
+       }
+    }
+ 
++   mesa_logi("selected dma_type=%d dma_fd=%d",
++          device->kgsl_dma_type,
++          dma_fd);
++
+    VkResult result = VK_ERROR_INITIALIZATION_FAILED;
+ 
+    struct kgsl_devinfo info;
+@@ -1856,6 +1868,17 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd,
+    device->local_fd = fd;
+    device->kgsl_dma_fd = dma_fd;
+ 
++  mesa_logi("after assign kgsl_dma_fd=%d device=%p",
++          device->kgsl_dma_fd,
++          device);
++
++   mesa_logi("assigned physical=%p dma_fd=%d",
++          device,
++          device->kgsl_dma_fd);
++
++   mesa_logi("load device=%p dma_fd=%d",
++          device, dma_fd);
++
+    device->dev_id.gpu_id =
+       ((info.chip_id >> 24) & 0xff) * 100 +
+       ((info.chip_id >> 16) & 0xff) * 10 +
+@@ -1867,7 +1890,7 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd,
+    device->has_raytracing = tu_kgsl_get_raytracing(fd);
+ 
+    device->submitqueue_priority_count = 1;
+-   
++
+    device->timeline_type = vk_sync_timeline_get_type(&vk_kgsl_sync_type);
+ 
+    device->sync_types[0] = &vk_kgsl_sync_type;
+@@ -1885,7 +1908,7 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd,
+    device->has_cached_coherent_memory = kgsl_is_memory_type_supported(
+       fd, KGSL_MEMFLAGS_IOCOHERENT |
+              (KGSL_CACHEMODE_WRITEBACK << KGSL_CACHEMODE_SHIFT));
+-
++   device->has_cached_non_coherent_memory = true;
+    device->has_sparse = kgsl_is_virtual_bo_supported(fd);
+    device->has_sparse_prr = device->has_sparse;
+    device->has_lazy_bos = device->has_sparse;
+@@ -1946,10 +1969,22 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd,
+ 
+    instance->knl = &kgsl_drm_knl_funcs;
+ 
++   mesa_logi("before init dma_fd=%d",
++          device->kgsl_dma_fd);
++   mesa_logi("before physical_init kgsl_dma_fd=%d device=%p",
++          device->kgsl_dma_fd,
++          device);
+    result = tu_physical_device_init(device, instance);
++   mesa_logi("after init dma_fd=%d",
++          device->kgsl_dma_fd);
+    if (result != VK_SUCCESS)
+       goto fail;
+ 
++   if (device->kgsl_dma_fd < 0) {
++      device->kgsl_dma_fd = dma_fd;
++      mesa_logi("restored dma_fd=%d", dma_fd);
++   }
++
+    *out = device;
+ 
+    return VK_SUCCESS;
+-- 
+2.47.3
+
