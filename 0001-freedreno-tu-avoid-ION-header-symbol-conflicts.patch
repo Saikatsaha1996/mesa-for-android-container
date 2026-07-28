@@ -1,0 +1,121 @@
+From 6c40647cca11a73b734fb0cc945dc565ab98a8f1 Mon Sep 17 00:00:00 2001
+From: Your Name <you@example.com>
+Date: Tue, 28 Jul 2026 19:39:54 +0530
+Subject: [PATCH] freedreno/tu: avoid ION header symbol conflicts
+
+Signed-off-by: Your Name <you@example.com>
+---
+ src/freedreno/vulkan/ion/ion.h          | 8 ++++----
+ src/freedreno/vulkan/ion/ion_4.19.h     | 8 ++++----
+ src/freedreno/vulkan/tu_knl_kgsl_drm.cc | 8 ++++----
+ 3 files changed, 12 insertions(+), 12 deletions(-)
+
+diff --git a/src/freedreno/vulkan/ion/ion.h b/src/freedreno/vulkan/ion/ion.h
+index 9841c97..fe8e726 100644
+--- a/src/freedreno/vulkan/ion/ion.h
++++ b/src/freedreno/vulkan/ion/ion.h
+@@ -8,8 +8,8 @@
+  * contains no copyrightable information.
+  */
+ 
+-#ifndef _UAPI_LINUX_ION_H
+-#define _UAPI_LINUX_ION_H
++#ifndef _UAPI_LINUX_ION_NEW_H
++#define _UAPI_LINUX_ION_NEW_H
+ #include <linux/ioctl.h>
+ #include <linux/types.h>
+ /* WARNING: DO NOT EDIT, AUTO-GENERATED CODE - SEE TOP FOR INSTRUCTIONS */
+@@ -34,7 +34,7 @@ enum ion_heap_type {
+ #define ION_FLAG_CACHED 1
+ /* WARNING: DO NOT EDIT, AUTO-GENERATED CODE - SEE TOP FOR INSTRUCTIONS */
+ #define ION_FLAG_CACHED_NEEDS_SYNC 2
+-struct ion_allocation_data {
++struct ion_new_allocation_data {
+  size_t len;
+  size_t align;
+ /* WARNING: DO NOT EDIT, AUTO-GENERATED CODE - SEE TOP FOR INSTRUCTIONS */
+@@ -58,7 +58,7 @@ struct ion_custom_data {
+ };
+ #define ION_IOC_MAGIC 'I'
+ /* WARNING: DO NOT EDIT, AUTO-GENERATED CODE - SEE TOP FOR INSTRUCTIONS */
+-#define ION_IOC_ALLOC _IOWR(ION_IOC_MAGIC, 0,   struct ion_allocation_data)
++#define ION_IOC_NEW_ALLOC _IOWR(ION_IOC_MAGIC, 0,   struct ion_new_allocation_data)
+ #define ION_IOC_FREE _IOWR(ION_IOC_MAGIC, 1, struct ion_handle_data)
+ #define ION_IOC_MAP _IOWR(ION_IOC_MAGIC, 2, struct ion_fd_data)
+ #define ION_IOC_SHARE _IOWR(ION_IOC_MAGIC, 4, struct ion_fd_data)
+diff --git a/src/freedreno/vulkan/ion/ion_4.19.h b/src/freedreno/vulkan/ion/ion_4.19.h
+index e5a45c9..98ab9be 100644
+--- a/src/freedreno/vulkan/ion/ion_4.19.h
++++ b/src/freedreno/vulkan/ion/ion_4.19.h
+@@ -8,8 +8,8 @@
+  * contains no copyrightable information.
+  */
+ 
+-#ifndef _UAPI_LINUX_ION_NEW_H
+-#define _UAPI_LINUX_ION_NEW_H
++#ifndef _UAPI_LINUX_ION_H
++#define _UAPI_LINUX_ION_H
+ #include <linux/ioctl.h>
+ #include <linux/types.h>
+ #define ION_NUM_HEAP_IDS (sizeof(unsigned int) * 8)
+@@ -25,7 +25,7 @@ enum ion_heap_id {
+     ION_HEAP_CUSTOM_END = (ION_HEAP_CUSTOM_START << 22),
+ };
+ #define ION_NUM_MAX_HEAPS (32)
+-struct ion_new_allocation_data {
++struct ion_allocation_data {
+     __u64 len;
+     __u32 heap_id_mask;
+     __u32 flags;
+@@ -49,7 +49,7 @@ struct ion_heap_query {
+     __u32 reserved2;
+ };
+ #define ION_IOC_MAGIC 'I'
+-#define ION_IOC_NEW_ALLOC _IOWR(ION_IOC_MAGIC, 0, struct ion_new_allocation_data)
++#define ION_IOC_ALLOC _IOWR(ION_IOC_MAGIC, 0, struct ion_allocation_data)
+ #define ION_IOC_HEAP_QUERY _IOWR(ION_IOC_MAGIC, 8, struct ion_heap_query)
+ #define ION_IOC_ABI_VERSION _IOR(ION_IOC_MAGIC, 9, __u32)
+ #endif
+diff --git a/src/freedreno/vulkan/tu_knl_kgsl_drm.cc b/src/freedreno/vulkan/tu_knl_kgsl_drm.cc
+index e4b80b1..88c43e0 100644
+--- a/src/freedreno/vulkan/tu_knl_kgsl_drm.cc
++++ b/src/freedreno/vulkan/tu_knl_kgsl_drm.cc
+@@ -104,7 +104,7 @@ static VkResult
+ bo_init_new_ion(struct tu_device *dev, struct tu_bo **out_bo, uint64_t size,
+                 enum tu_bo_alloc_flags flags)
+ {
+-   struct ion_new_allocation_data alloc = {
++   struct ion_allocation_data alloc = {
+       .len = size,
+       .heap_id_mask = KGSL_ION_SYSTEM_HEAP_MASK,
+       .flags = 0,
+@@ -112,7 +112,7 @@ bo_init_new_ion(struct tu_device *dev, struct tu_bo **out_bo, uint64_t size,
+    };
+ 
+    int ret;
+-   ret = safe_ioctl(dev->physical_device->kgsl_dma_fd, ION_IOC_NEW_ALLOC, &alloc);
++   ret = safe_ioctl(dev->physical_device->kgsl_dma_fd, ION_IOC_ALLOC, &alloc);
+    if (ret) {
+       return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+                        "ION_IOC_NEW_ALLOC failed (%s)", strerror(errno));
+@@ -125,7 +125,7 @@ static VkResult
+ bo_init_new_ion_legacy(struct tu_device *dev, struct tu_bo **out_bo, uint64_t size,
+                        enum tu_bo_alloc_flags flags)
+ {
+-   struct ion_allocation_data alloc = {
++   struct ion_new_allocation_data alloc = {
+       .len = size,
+       .align = 4096,
+       .heap_id_mask = KGSL_ION_SYSTEM_HEAP_MASK,
+@@ -134,7 +134,7 @@ bo_init_new_ion_legacy(struct tu_device *dev, struct tu_bo **out_bo, uint64_t si
+    };
+ 
+    int ret;
+-   ret = safe_ioctl(dev->physical_device->kgsl_dma_fd, ION_IOC_ALLOC, &alloc);
++   ret = safe_ioctl(dev->physical_device->kgsl_dma_fd, ION_IOC_NEW_ALLOC, &alloc);
+    if (ret) {
+       return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+                        "ION_IOC_ALLOC failed (%s)", strerror(errno));
+-- 
+2.53.0
+
