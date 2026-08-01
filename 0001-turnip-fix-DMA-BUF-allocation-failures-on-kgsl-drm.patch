@@ -1,0 +1,118 @@
+From 822b539b90895638f4d0ab190c65016074415fcf Mon Sep 17 00:00:00 2001
+From: Your Name <you@example.com>
+Date: Sat, 1 Aug 2026 20:32:59 +0530
+Subject: [PATCH] turnip: fix DMA-BUF allocation failures on kgsl-drm
+
+---
+ src/freedreno/vulkan/tu_knl.cc          |  4 +++-
+ src/freedreno/vulkan/tu_knl_kgsl_drm.cc | 14 ++++++++++++++
+ src/gallium/drivers/zink/zink_bo.c      | 22 ++++++++++++++++++++++
+ 3 files changed, 39 insertions(+), 1 deletion(-)
+
+diff --git a/src/freedreno/vulkan/tu_knl.cc b/src/freedreno/vulkan/tu_knl.cc
+index de09300..9f63727 100644
+--- a/src/freedreno/vulkan/tu_knl.cc
++++ b/src/freedreno/vulkan/tu_knl.cc
+@@ -442,7 +442,9 @@ tu_physical_device_try_create(struct vk_instance *vk_instance,
+    }
+ 
+    device->master_fd = master_fd;
+-   device->kgsl_dma_fd = -1;
++   //device->kgsl_dma_fd = -1;
++   if (device->kgsl_dma_fd == 0)
++      device->kgsl_dma_fd = -1;
+ 
+    assert(strlen(path) < ARRAY_SIZE(device->fd_path));
+    snprintf(device->fd_path, ARRAY_SIZE(device->fd_path), "%s", path);
+diff --git a/src/freedreno/vulkan/tu_knl_kgsl_drm.cc b/src/freedreno/vulkan/tu_knl_kgsl_drm.cc
+index e4b80b1..e9e52ab 100644
+--- a/src/freedreno/vulkan/tu_knl_kgsl_drm.cc
++++ b/src/freedreno/vulkan/tu_knl_kgsl_drm.cc
+@@ -331,6 +331,7 @@ kgsl_bo_init_dmabuf(struct tu_device *dev,
+                     enum tu_bo_alloc_flags flags,
+                     int fd)
+ {
++   mesa_loge("IMPORT input fd=%d", fd);
+    struct kgsl_gpuobj_import_dma_buf import_dmabuf = {
+       .fd = fd,
+    };
+@@ -369,9 +370,14 @@ kgsl_bo_init_dmabuf(struct tu_device *dev,
+       .refcnt = 1,
+       .shared_fd = os_dupfd_cloexec(fd),
+    };
++   mesa_loge("IMPORT shared_fd=%d", bo->shared_fd);
+ 
+    struct stat st;
+    if (fstat(fd, &st) == 0)
++   if (fstat(bo->shared_fd, &st) == 0)
++      mesa_loge("IMPORT shared inode=%lu mode=%o",
++                (unsigned long)st.st_ino,
++                st.st_mode);
+       /* Use the inode number as the unique ID, but set the MSB to avoid
+        * collisions with 32-bit KGSL handles (which are used for native BOs).
+        */
+@@ -388,6 +394,13 @@ static int
+ kgsl_bo_export_dmabuf(struct tu_device *dev, struct tu_bo *bo)
+ {
+    assert(bo->shared_fd != -1);
++   mesa_loge("EXPORT shared_fd=%d", bo->shared_fd);
++
++   struct stat st;
++   if (fstat(bo->shared_fd, &st) == 0)
++      mesa_loge("EXPORT inode=%lu mode=%o",
++                (unsigned long) st.st_ino,
++                st.st_mode);
+    return os_dupfd_cloexec(bo->shared_fd);
+ }
+ 
+@@ -1886,6 +1899,7 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd,
+       fd, KGSL_MEMFLAGS_IOCOHERENT |
+              (KGSL_CACHEMODE_WRITEBACK << KGSL_CACHEMODE_SHIFT));
+ 
++   device->has_cached_non_coherent_memory = true;
+    device->has_sparse = kgsl_is_virtual_bo_supported(fd);
+    device->has_sparse_prr = device->has_sparse;
+    device->has_lazy_bos = device->has_sparse;
+diff --git a/src/gallium/drivers/zink/zink_bo.c b/src/gallium/drivers/zink/zink_bo.c
+index 04aa8cc..46b7fa8 100644
+--- a/src/gallium/drivers/zink/zink_bo.c
++++ b/src/gallium/drivers/zink/zink_bo.c
+@@ -34,6 +34,7 @@
+ #include "zink_resource.h"
+ #include "zink_screen.h"
+ #include "util/u_hash_table.h"
++#include <sys/sysmacros.h>
+ 
+ #ifdef HAVE_LIBDRM
+ #define ZINK_USE_DMABUF
+@@ -1265,6 +1266,27 @@ zink_bo_get_kms_handle(struct zink_screen *screen, struct zink_bo *bo, int fd, u
+       simple_mtx_unlock(&bo->u.real.export_lock);
+       return false;
+    }
++   char path[64], link[256];
++   snprintf(path, sizeof(path), "/proc/self/fd/%d", screen->drm_fd);
++
++   ssize_t len = readlink(path, link, sizeof(link) - 1);
++   if (len > 0) {
++      link[len] = 0;
++      mesa_loge("ZINK drm_fd=%d -> %s", screen->drm_fd, link);
++   }
++
++   snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
++   len = readlink(path, link, sizeof(link) - 1);
++   if (len > 0) {
++      link[len] = 0;
++      mesa_loge("ZINK prime_fd=%d -> %s", fd, link);
++   }
++   struct stat st;
++
++   if (fstat(screen->drm_fd, &st) == 0) {
++      mesa_loge("drm_fd rdev=%u:%u",
++                major(st.st_rdev), minor(st.st_rdev));
++   }
+    bool success = drmPrimeFDToHandle(screen->drm_fd, fd, handle) == 0;
+    if (success) {
+       list_addtail(&export->link, &bo->u.real.exports);
+-- 
+2.47.3
+
