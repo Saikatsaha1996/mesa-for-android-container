@@ -1,0 +1,186 @@
+From 5f7e5fee816d84990e3e8f1b3f404a55470dcd4e Mon Sep 17 00:00:00 2001
+From: Your Name <you@example.com>
+Date: Sun, 9 Aug 2026 21:57:10 +0530
+Subject: [PATCH 2/2] freedreno vulkan fix KGSL sync timeout crash and han
+
+---
+ src/freedreno/vulkan/tu_device.cc       | 11 ++++++++---
+ src/freedreno/vulkan/tu_device.h        |  1 +
+ src/freedreno/vulkan/tu_knl.cc          | 12 +++++++++---
+ src/freedreno/vulkan/tu_knl.h           |  1 +
+ src/freedreno/vulkan/tu_knl_kgsl_drm.cc | 13 +++++++------
+ src/freedreno/vulkan/tu_wsi.cc          |  6 +++++-
+ 6 files changed, 31 insertions(+), 13 deletions(-)
+
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+index 213d958..dcb0dda 100644
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -1812,7 +1812,12 @@ tu_physical_device_finish(struct tu_physical_device *device)
+    tu_wsi_finish(device);
+ #endif
+ 
+-   close(device->local_fd);
++   if (device->drm_fd != -1)
++      close(device->drm_fd);
++
++   if (device->local_fd != -1)
++      close(device->local_fd);
++
+    if (device->master_fd != -1)
+       close(device->master_fd);
+ 
+@@ -2881,8 +2886,8 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
+       tu_memory_trace_init(device);
+ 
+    /* kgsl is not a drm device: */
+-   if (!is_kgsl(physical_device->instance) && (device->fd >= 0))
+-      vk_device_set_drm_fd(&device->vk, device->fd);
++   if (physical_device->drm_fd >= 0)
++      vk_device_set_drm_fd(&device->vk, physical_device->drm_fd);
+ 
+    struct tu6_global *global = NULL;
+    uint32_t global_size = sizeof(struct tu6_global);
+diff --git a/src/freedreno/vulkan/tu_device.h b/src/freedreno/vulkan/tu_device.h
+index e5e58c9..68d69c0 100644
+--- a/src/freedreno/vulkan/tu_device.h
++++ b/src/freedreno/vulkan/tu_device.h
+@@ -95,6 +95,7 @@ struct tu_physical_device
+    struct wsi_device wsi_device;
+ 
+    char fd_path[20];
++   int drm_fd;
+    int local_fd;
+    bool has_local;
+    int64_t local_major;
+diff --git a/src/freedreno/vulkan/tu_knl.cc b/src/freedreno/vulkan/tu_knl.cc
+index de09300..0503a35 100644
+--- a/src/freedreno/vulkan/tu_knl.cc
++++ b/src/freedreno/vulkan/tu_knl.cc
+@@ -425,7 +425,7 @@ tu_physical_device_try_create(struct vk_instance *vk_instance,
+    } else if (strcmp(version->name, "msm_drm") == 0) {
+       if (TU_DEBUG(STARTUP))
+          mesa_log(MESA_LOG_INFO, "TU_MOD", "select kgsl drm");
+-      result = tu_knl_kgsl_drm_load(instance, version, &device, "/dev/kgsl-3d0");
++      result = tu_knl_kgsl_drm_load(instance, fd, version, &device, "/dev/kgsl-3d0");
+    } else {
+       result = vk_startup_errorf(instance, VK_ERROR_INCOMPATIBLE_DRIVER,
+                                  "device %s (%s) is not compatible with turnip",
+@@ -437,12 +437,15 @@ tu_physical_device_try_create(struct vk_instance *vk_instance,
+ 
+    assert(device);
+ 
++   if (strcmp(version->name, "msm_drm") == 0) {
++      fd = -1;
++   }
++
+    if (instance->vk.enabled_extensions.KHR_display) {
+       master_fd = open(primary_path, O_RDWR | O_CLOEXEC);
+    }
+ 
+    device->master_fd = master_fd;
+-   device->kgsl_dma_fd = -1;
+ 
+    assert(strlen(path) < ARRAY_SIZE(device->fd_path));
+    snprintf(device->fd_path, ARRAY_SIZE(device->fd_path), "%s", path);
+@@ -487,7 +490,10 @@ out:
+    if (result != VK_SUCCESS) {
+       if (master_fd != -1)
+          close(master_fd);
+-      close(fd);
++      if (fd != -1)
++         close(fd);
++      if (device && device->drm_fd != -1)
++         close(device->drm_fd);
+       vk_free(&instance->vk.alloc, device);
+    }
+ 
+diff --git a/src/freedreno/vulkan/tu_knl.h b/src/freedreno/vulkan/tu_knl.h
+index e5d61a4..d223596 100644
+--- a/src/freedreno/vulkan/tu_knl.h
++++ b/src/freedreno/vulkan/tu_knl.h
+@@ -264,6 +264,7 @@ void tu_sparse_vma_finish(struct tu_device *device,
+ 
+ VkResult
+ tu_knl_kgsl_drm_load(struct tu_instance *instance,
++                     int drm_fd,
+                      struct _drmVersion *version,
+                      struct tu_physical_device **out,
+                      const char *path);
+diff --git a/src/freedreno/vulkan/tu_knl_kgsl_drm.cc b/src/freedreno/vulkan/tu_knl_kgsl_drm.cc
+index e4b80b1..fd380e9 100644
+--- a/src/freedreno/vulkan/tu_knl_kgsl_drm.cc
++++ b/src/freedreno/vulkan/tu_knl_kgsl_drm.cc
+@@ -1760,6 +1760,7 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd,
+ 
+ VkResult
+ tu_knl_kgsl_drm_load(struct tu_instance *instance,
++                     int drm_fd,
+                      struct _drmVersion *version,
+                      struct tu_physical_device **out,
+                      const char *path)
+@@ -1781,6 +1782,7 @@ tu_knl_kgsl_drm_load(struct tu_instance *instance,
+       return result;
+    }
+    struct tu_physical_device * device = *out;
++   device->drm_fd = drm_fd;
+    device->msm_major_version = version->version_major;
+    device->msm_minor_version = version->version_minor;
+ 
+@@ -1801,7 +1803,7 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd,
+ 
+    static const char dma_heap_path[] = "/dev/dma_heap/system";
+    static const char ion_path[] = "/dev/ion";
+-   int dma_fd;
++   int dma_fd = -1;
+ 
+    dma_fd = open(dma_heap_path, O_RDONLY);
+    if (dma_fd >= 0) {
+@@ -1867,7 +1869,7 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd,
+    device->has_raytracing = tu_kgsl_get_raytracing(fd);
+ 
+    device->submitqueue_priority_count = 1;
+-   
++
+    device->timeline_type = vk_sync_timeline_get_type(&vk_kgsl_sync_type);
+ 
+    device->sync_types[0] = &vk_kgsl_sync_type;
+@@ -1946,15 +1948,14 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd,
+ 
+    instance->knl = &kgsl_drm_knl_funcs;
+ 
+-   result = tu_physical_device_init(device, instance);
+-   if (result != VK_SUCCESS)
+-      goto fail;
+-
+    *out = device;
+ 
+    return VK_SUCCESS;
+ 
+ fail:
++   if (device->drm_fd >= 0)
++      close(device->drm_fd);
++
+    vk_free(&instance->vk.alloc, device);
+    close(fd);
+    if (dma_fd >= 0)
+diff --git a/src/freedreno/vulkan/tu_wsi.cc b/src/freedreno/vulkan/tu_wsi.cc
+index 12b694b..8747f66 100644
+--- a/src/freedreno/vulkan/tu_wsi.cc
++++ b/src/freedreno/vulkan/tu_wsi.cc
+@@ -27,7 +27,11 @@ tu_wsi_can_present_on_device(VkPhysicalDevice physicalDevice, int fd)
+ {
+ #ifdef HAVE_LIBDRM
+    VK_FROM_HANDLE(tu_physical_device, pdevice, physicalDevice);
+-   return wsi_common_drm_devices_equal(fd, pdevice->local_fd);
++
++   if (pdevice->drm_fd < 0)
++      return true;
++
++   return wsi_common_drm_devices_equal(fd, pdevice->drm_fd);
+ #else
+    return true;
+ #endif
+-- 
+2.55.0
+
