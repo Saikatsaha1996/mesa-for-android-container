@@ -83,7 +83,7 @@ option(
 option(
   'gallium-drivers',
   type : 'array',
-  value : ['auto'],
+  value : [],
   choices : [
     'all', 'auto',
     'asahi', 'crocus', 'd3d12', 'ethosu', 'etnaviv', 'freedreno', 'i915', 'iris',
@@ -206,7 +206,7 @@ option(
 option(
   'vulkan-drivers',
   type : 'array',
-  value : ['auto'],
+  value : ['freedreno'],
   choices : ['auto', 'amd', 'broadcom', 'freedreno', 'intel', 'intel_hasvk',
              'panfrost', 'swrast', 'virtio', 'imagination',
              'microsoft-experimental', 'nouveau', 'asahi', 'gfxstream',
@@ -222,8 +222,8 @@ option(
 option(
   'freedreno-kmds',
   type : 'array',
-  value : ['msm'],
-  choices : ['msm', 'kgsl', 'virtio', 'wsl'],
+  value : ['kgsl-drm'],
+  choices : ['msm', 'kgsl', 'virtio', 'wsl', 'kgsl-drm'],
   description : 'List of kernel-mode drivers to enable for freedreno ' +
                 'gallium and vulkan driver',
 )

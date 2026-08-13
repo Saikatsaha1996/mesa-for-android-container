@@ -95,6 +95,7 @@ struct tu_physical_device
    struct wsi_device wsi_device;
 
    char fd_path[20];
+   int drm_fd;
    int local_fd;
    bool has_local;
    int64_t local_major;

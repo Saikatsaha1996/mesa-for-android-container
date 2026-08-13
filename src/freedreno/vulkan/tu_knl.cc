@@ -388,6 +388,7 @@ tu_physical_device_try_create(struct vk_instance *vk_instance,
    const char *path = drm_device->nodes[DRM_NODE_RENDER];
    drmVersionPtr version;
    int fd;
+   int drm_fd = -1;
    int master_fd = -1;
 
    fd = open(path, O_RDWR | O_CLOEXEC);
@@ -422,7 +423,21 @@ tu_physical_device_try_create(struct vk_instance *vk_instance,
 #ifdef TU_HAS_VIRTIO
       result = tu_knl_drm_virtio_load(instance, fd, version, &device);
 #endif
-   } else if (TU_DEBUG(STARTUP)) {
+   } else if (strcmp(version->name, "msm_drm") == 0) {
+      if (TU_DEBUG(STARTUP))
+         mesa_log(MESA_LOG_INFO, "TU_MOD", "select kgsl drm");
+
+      drm_fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
+      if (drm_fd < 0) {
+         result = VK_ERROR_INITIALIZATION_FAILED;
+         goto out;
+      }
+
+      result = tu_knl_kgsl_drm_load(instance, drm_fd, version, &device, "/dev/kgsl-3d0");
+
+      drm_fd = -1;
+
+   } else {
       result = vk_startup_errorf(instance, VK_ERROR_INCOMPATIBLE_DRIVER,
                                  "device %s (%s) is not compatible with turnip",
                                  path, version->name);
@@ -433,12 +448,15 @@ tu_physical_device_try_create(struct vk_instance *vk_instance,
 
    assert(device);
 
+   if (strcmp(version->name, "msm_drm") == 0) {
+      fd = -1;
+   }
+
    if (instance->vk.enabled_extensions.KHR_display) {
       master_fd = open(primary_path, O_RDWR | O_CLOEXEC);
    }
 
    device->master_fd = master_fd;
-   device->kgsl_dma_fd = -1;
 
    assert(strlen(path) < ARRAY_SIZE(device->fd_path));
    snprintf(device->fd_path, ARRAY_SIZE(device->fd_path), "%s", path);
@@ -483,7 +501,13 @@ out:
    if (result != VK_SUCCESS) {
       if (master_fd != -1)
          close(master_fd);
-      close(fd);
+
+      if (fd != -1)
+         close(fd);
+
+      if (drm_fd != -1)
+         close(drm_fd);
+
       vk_free(&instance->vk.alloc, device);
    }
 

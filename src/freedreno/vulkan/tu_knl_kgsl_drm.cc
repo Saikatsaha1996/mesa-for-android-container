@@ -11,6 +11,8 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 
+#include <xf86drm.h>
+
 #define __user
 #include "ion/ion.h"
 #include "ion/ion_4.19.h"
@@ -1714,8 +1716,8 @@ kgsl_device_check_status(struct tu_device *device)
    return VK_SUCCESS;
 }
 
-static const struct tu_knl kgsl_knl_funcs = {
-      .name = "kgsl",
+static const struct tu_knl kgsl_drm_knl_funcs = {
+      .name = "kgsl_drm",
 
       .device_init = kgsl_device_init,
       .device_finish = kgsl_device_finish,
@@ -1752,12 +1754,38 @@ tu_kgsl_get_raytracing(int fd)
 }
 
 VkResult
-tu_knl_kgsl_load(struct tu_instance *instance, int fd)
+tu_knl_kgsl_drm_load(struct tu_instance *instance,
+                     int drm_fd,
+                     struct _drmVersion *version,
+                     struct tu_physical_device **out,
+                     const char *path)
 {
-   if (instance->vk.enabled_extensions.KHR_display) {
+   int kgsl_fd = open(path, O_RDWR | O_CLOEXEC);
+   if (kgsl_fd < 0) {
+      close(drm_fd);
+      if (errno == ENOENT)
+         return VK_ERROR_INCOMPATIBLE_DRIVER;
+
       return vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
-                       "I can't KHR_display");
+                       "failed to open device %s", path);
    }
+
+   VkResult result = tu_knl_kgsl_load(instance, kgsl_fd, out);
+   if (result != VK_SUCCESS) {
+      close(drm_fd);
+      return result;
+   }
+   struct tu_physical_device * device = *out;
+   device->drm_fd = drm_fd;
+   device->msm_major_version = version->version_major;
+   device->msm_minor_version = version->version_minor;
+
+   return result;
+}
+
+VkResult
+tu_knl_kgsl_load(struct tu_instance *instance, int fd,
+                 struct tu_physical_device **out){
 
    struct tu_physical_device *device = (struct tu_physical_device *)
       vk_zalloc(&instance->vk.alloc, sizeof(*device), 8,
@@ -1767,9 +1795,11 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd)
       return vk_error(instance, VK_ERROR_OUT_OF_HOST_MEMORY);
    }
 
+   device->drm_fd = -1;
+
    static const char dma_heap_path[] = "/dev/dma_heap/system";
    static const char ion_path[] = "/dev/ion";
-   int dma_fd;
+   int dma_fd = -1;
 
    dma_fd = open(dma_heap_path, O_RDONLY);
    if (dma_fd >= 0) {
@@ -1835,7 +1865,7 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd)
    device->has_raytracing = tu_kgsl_get_raytracing(fd);
 
    device->submitqueue_priority_count = 1;
-   
+
    device->timeline_type = vk_sync_timeline_get_type(&vk_kgsl_sync_type);
 
    device->sync_types[0] = &vk_kgsl_sync_type;
@@ -1912,13 +1942,9 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd)
       device->ubwc_config.bank_swizzle_levels = 0x4;
    }
 
-   instance->knl = &kgsl_knl_funcs;
+   instance->knl = &kgsl_drm_knl_funcs;
 
-   result = tu_physical_device_init(device, instance);
-   if (result != VK_SUCCESS)
-      goto fail;
-
-   list_addtail(&device->vk.link, &instance->vk.physical_devices.list);
+   *out = device;
 
    return VK_SUCCESS;
 

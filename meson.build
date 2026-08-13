@@ -320,7 +320,7 @@ with_gallium_or_lvp = with_gallium or with_swrast_vk
 
 freedreno_kmds = get_option('freedreno-kmds')
 if freedreno_kmds.length() != 0 and freedreno_kmds != [ 'msm' ] and with_freedreno_vk
-  if freedreno_kmds.contains('msm')
+  if freedreno_kmds.contains('msm') or freedreno_kmds.contains('kgsl-drm')
       warning('Turnip with the DRM KMD will require libdrm to always be present at runtime which may not always be the case on platforms such as Android.')
   elif with_gallium_drm
       warning('Turnip is forced to link with libdrm when built alongside Gallium DRM drivers which platforms such as Android may not have available at runtime.')

@@ -1812,7 +1812,12 @@ tu_physical_device_finish(struct tu_physical_device *device)
    tu_wsi_finish(device);
 #endif
 
-   close(device->local_fd);
+   if (device->drm_fd != -1)
+      close(device->drm_fd);
+
+   if (device->local_fd != -1)
+      close(device->local_fd);
+
    if (device->master_fd != -1)
       close(device->master_fd);
 
@@ -2881,8 +2886,8 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
       tu_memory_trace_init(device);
 
    /* kgsl is not a drm device: */
-   if (!is_kgsl(physical_device->instance) && (device->fd >= 0))
-      vk_device_set_drm_fd(&device->vk, device->fd);
+   if (physical_device->drm_fd >= 0)
+      vk_device_set_drm_fd(&device->vk, physical_device->drm_fd);
 
    struct tu6_global *global = NULL;
    uint32_t global_size = sizeof(struct tu6_global);
